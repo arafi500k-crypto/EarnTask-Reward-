@@ -79,7 +79,14 @@ export default function App() {
 
   const [yesterdayIncome, setYesterdayIncome] = useState<number>(() => {
     const saved = localStorage.getItem('taka_yesterday_income');
-    return saved ? parseFloat(saved) : 380;
+    const adCount = localStorage.getItem('taka_ads_watched_count');
+    const watched = adCount ? parseInt(adCount, 10) : 0;
+    // For general cleanups or if it has the mock 380 value, fallback to 0
+    if (watched === 0 || !saved || parseFloat(saved) === 380) {
+      localStorage.setItem('taka_yesterday_income', '0');
+      return 0;
+    }
+    return parseFloat(saved);
   });
 
   const [withdrawHistory, setWithdrawHistory] = useState<Array<{
@@ -93,6 +100,10 @@ export default function App() {
     const saved = localStorage.getItem('taka_withdraw_history');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Calculate dynamic total income accurately in sync with balance and withdrawals
+  const totalWithdrawn = withdrawHistory.reduce((sum, item) => sum + item.amount, 0);
+  const totalIncome = balance + totalWithdrawn;
 
   // Profile View form states and withdrawal configuration
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -638,18 +649,34 @@ export default function App() {
                               </div>
                             </div>
                             
-                            <button
-                              onClick={() => {
-                                playTapSound();
-                                setEditNameField(userName);
-                                setEditIdField(userId);
-                                setIsEditingProfile(true);
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-pink-500 hover:text-pink-600 rounded-xl text-[10.5px] font-black text-slate-500 transition-all cursor-pointer shadow-xs"
-                            >
-                              <PenSquare className="w-3.5 h-3.5" />
-                              <span>প্রোফাইল সংশোধন করুন</span>
-                            </button>
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              <button
+                                onClick={() => {
+                                  playTapSound();
+                                  setEditNameField(userName);
+                                  setEditIdField(userId);
+                                  setIsEditingProfile(true);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-pink-500 hover:text-pink-600 rounded-xl text-[10.5px] font-black text-slate-500 transition-all cursor-pointer shadow-xs"
+                              >
+                                <PenSquare className="w-3.5 h-3.5" />
+                                <span>প্রোফাইল সংশোধন করুন</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  if (confirm('আপনি কি নিশ্চিত যে আপনি সমস্ত ইনকাম ও হিস্ট্রি রিসেট করতে চান?')) {
+                                    playTapSound();
+                                    localStorage.clear();
+                                    window.location.reload();
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 border border-rose-100/50 hover:bg-rose-100 hover:text-rose-700 rounded-xl text-[10.5px] font-black text-rose-600 transition-all cursor-pointer shadow-xs"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <span>ডাটা রিসেট করুন</span>
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <form onSubmit={handleProfileSave} className="space-y-3 max-w-md bg-white p-4 rounded-2xl border border-slate-100 shadow-xs">
@@ -733,7 +760,7 @@ export default function App() {
                         </div>
                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">মোট ইনকাম</span>
                       </div>
-                      <p className="text-sm font-extrabold text-slate-800 font-mono tracking-wide">৳ {((adsWatched * 19) + yesterdayIncome).toFixed(2)}</p>
+                      <p className="text-sm font-extrabold text-slate-800 font-mono tracking-wide">৳ {totalIncome.toFixed(2)}</p>
                     </div>
 
                     <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
