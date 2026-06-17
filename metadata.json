@@ -1,0 +1,6 @@
+{
+  "name": "Taka Earning Simulator",
+  "description": "A bKash-style tap-to-reveal balance check, simulated interactive ad-viewing rewarding 19 Taka, and a simulated 20 Taka account activation system where all transaction submissions are playfully marked as incorrect.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
