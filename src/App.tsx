@@ -31,7 +31,9 @@ import {
   Check,
   Loader2,
   Briefcase,
-  History
+  History,
+  Package,
+  Star
 } from 'lucide-react';
 
 import { ViewState } from './types';
@@ -52,6 +54,25 @@ export default function App() {
     return saved === 'true';
   });
 
+  const [isPackageActive, setIsPackageActive] = useState<boolean>(() => {
+    const saved = localStorage.getItem('taka_package_active');
+    return saved === 'true';
+  });
+
+  const [hasBoughtPackage, setHasBoughtPackage] = useState<boolean>(() => {
+    const saved = localStorage.getItem('taka_has_bought_package');
+    if (saved === 'true') {
+      return true;
+    }
+    // Backward compatibility for users who previously bought the package
+    const legacyPackageActive = localStorage.getItem('taka_package_active') === 'true';
+    if (legacyPackageActive) {
+      localStorage.setItem('taka_has_bought_package', 'true');
+      return true;
+    }
+    return false;
+  });
+
   const [adsWatched, setAdsWatched] = useState<number>(() => {
     const saved = localStorage.getItem('taka_ads_watched_count');
     return saved ? parseInt(saved, 10) : 0;
@@ -62,10 +83,19 @@ export default function App() {
   const [recentEarning, setRecentEarning] = useState(0);
   
   // Custom states added for tabs, editable username, and withdrawal option
-  const [activeTab, setActiveTab] = useState<'work' | 'profile'>('work');
+  const [activeTab, setActiveTab] = useState<'work' | 'profile' | 'package'>('work');
+
+  // Package payment form fields
+  const [senderNumberPackage, setSenderNumberPackage] = useState('');
+  const [trxIdPackage, setTrxIdPackage] = useState('');
+  const [isSubmittingPackage, setIsSubmittingPackage] = useState(false);
+  const [packageSuccessMsg, setPackageSuccessMsg] = useState('');
+  const [packageErrorMsg, setPackageErrorMsg] = useState('');
+  const [showPackagePaymentForm, setShowPackagePaymentForm] = useState(false);
+  const [copiedTypePackage, setCopiedTypePackage] = useState<'bkash' | 'nagad' | null>(null);
   
   const [userName, setUserName] = useState<string>(() => {
-    return localStorage.getItem('taka_user_name') || 'সাজ্জাদুল হাসান আরাফি';
+    return localStorage.getItem('taka_user_name') || 'User no 027292726';
   });
 
   const [userId, setUserId] = useState<string>(() => {
@@ -131,6 +161,14 @@ export default function App() {
   }, [isActive]);
 
   useEffect(() => {
+    localStorage.setItem('taka_package_active', isPackageActive.toString());
+  }, [isPackageActive]);
+
+  useEffect(() => {
+    localStorage.setItem('taka_has_bought_package', hasBoughtPackage.toString());
+  }, [hasBoughtPackage]);
+
+  useEffect(() => {
     localStorage.setItem('taka_ads_watched_count', adsWatched.toString());
   }, [adsWatched]);
 
@@ -160,6 +198,9 @@ export default function App() {
     if (!isActive) {
       // If account not active, show premium required activation page
       setView('active-account');
+    } else if (!isPackageActive) {
+      // If package not purchased, switch to package tab to buy it
+      setActiveTab('package');
     } else {
       // Start watching ad
       setView('ad-watching');
@@ -565,7 +606,7 @@ export default function App() {
                         <div className="p-2.5 bg-amber-100 rounded-xl text-amber-700 shrink-0">
                           <ShieldAlert className="w-6 h-6" />
                         </div>
-                        <div>
+                        <div className="text-left">
                           <h4 className="font-extrabold text-slate-800 text-sm">আপনার অ্যাকাউন্ট বর্তমানে নিষ্ক্রিয় অবস্থায় রয়েছে</h4>
                           <p className="text-xs text-slate-600 mt-0.5 leading-normal">বিজ্ঞাপন দেখে টাকা আয় শুরু করার জন্য প্রথমে ২০ টাকা দিয়ে অ্যাকাউন্ট একটিভ করুন।</p>
                         </div>
@@ -578,6 +619,29 @@ export default function App() {
                         className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black transition-colors shrink-0 flex items-center gap-1.5 shadow-sm"
                       >
                         <span>Active Your Account</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {isActive && !isPackageActive && (
+                    <div className="bg-gradient-to-br from-rose-50 to-pink-50 border border-rose-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex gap-3 items-start sm:items-center">
+                        <div className="p-2.5 bg-rose-100 rounded-xl text-[#e2136e] shrink-0">
+                          <Lock className="w-6 h-6" />
+                        </div>
+                        <div className="text-left">
+                          <h4 className="font-extrabold text-slate-800 text-sm">প্যাকেজ নিষ্ক্রিয় অবস্থায় রয়েছে!</h4>
+                          <p className="text-xs text-slate-600 mt-0.5 leading-normal">বিজ্ঞাপন দেখতে দয়া করে প্রথমে ৬০ টাকার <strong>Starting Package</strong> টি ক্রয় করুন।</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          playTapSound();
+                          setActiveTab('package');
+                        }}
+                        className="px-4 py-2.5 bg-[#e2136e] hover:bg-pink-700 text-white rounded-xl text-xs font-black transition-colors shrink-0 flex items-center gap-1.5 shadow-sm"
+                      >
+                        <span>প্যাকেজ কিনুন</span>
                       </button>
                     </div>
                   )}
@@ -621,6 +685,362 @@ export default function App() {
                       <span className="font-sans">এড দেখুন</span>
                     </button>
                   </div>
+                </motion.div>
+              ) : activeTab === 'package' ? (
+                <motion.div
+                  key="package-tab-anim"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6 flex flex-col flex-1"
+                >
+                  {/* Premium subscription folder block styled like the 1st picture */}
+                  <div className="relative w-full max-w-md mx-auto pt-4">
+                    {/* Visual File Folder Tab protruding from top left */}
+                    <div className="absolute top-0 left-6 flex items-end">
+                      <div className="bg-[#112d7d] border-t border-l border-r border-[#1e40af] px-4 py-1.5 rounded-t-xl flex items-center gap-2 relative z-10">
+                        <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 shrink-0" />
+                        <span className="text-[10px] font-black font-mono tracking-wider text-blue-100 uppercase">
+                          Starting Package Folder
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Manila style deep high-fidelity folder body */}
+                    <div className="relative bg-[#112d7d] text-white rounded-3xl rounded-tl-none shadow-2xl border border-[#1e40af] p-6 sm:p-8 overflow-hidden z-0 flex flex-col mt-7">
+                      
+                      {/* Brass brass fastener layout */}
+                      <div className="absolute top-4 right-6 flex items-center gap-1 opacity-50">
+                        <div className="w-1.5 h-6 rounded-full bg-gradient-to-r from-amber-400 to-amber-600 shadow-sm" />
+                        <div className="w-2.5 h-1.5 rounded-full bg-amber-700" />
+                        <p className="text-[8px] font-mono font-bold text-amber-200 ml-1">PKG_REF: 60_TK_STARTING</p>
+                      </div>
+
+                      {/* Header Badge */}
+                      <div className="self-center bg-blue-600/30 border border-blue-400/40 px-4 py-1.5 rounded-full flex items-center gap-1.5 mb-6 mt-2">
+                        <Star className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300" />
+                        <span className="text-[11px] font-black tracking-wide uppercase text-blue-100">Starting Package</span>
+                      </div>
+
+                      {/* Title Header */}
+                      <h3 className="text-2xl sm:text-3xl font-black tracking-normal text-white text-center leading-none">Starting Package</h3>
+                      <p className="text-xs text-blue-200/85 text-center mt-3 leading-relaxed max-w-xs mx-auto">
+                        Best for beginners who want to start reselling with selected products.
+                      </p>
+
+                      {/* High-Contrast Price Display */}
+                      <div className="my-6 text-center flex items-baseline justify-center gap-1.5">
+                        <span className="text-4xl sm:text-5xl font-black text-white font-sans">৳ ৬০</span>
+                        <span className="text-xs text-blue-300 font-bold">/ 4 months</span>
+                      </div>
+
+                      {/* Checkmarks Bullet list */}
+                      <div className="space-y-3.5 my-3 text-left max-w-xs mx-auto">
+                        <div className="flex items-start gap-2.5">
+                          <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
+                            <Check className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">Access to Starting Package products</span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
+                            <Check className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">Product marketing materials</span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
+                            <Check className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">Order placement through platform</span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
+                            <Check className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">Courier dispatch & tracking</span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
+                            <Check className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">Email & phone support</span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
+                            <Check className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-xs sm:text-[13px] text-cyan-300 font-bold">Product Wholesale Price</span>
+                        </div>
+                      </div>
+
+                      {/* Package Purchase Control */}
+                      <div className="mt-8">
+                        {hasBoughtPackage ? (
+                          <div className="bg-[#1e3a8a]/40 border border-[#3b82f6]/40 rounded-2xl p-4 text-center space-y-4">
+                            <div className="flex flex-col items-center">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-[10px] font-black rounded-lg uppercase tracking-wider mb-2 ${
+                                isPackageActive ? 'bg-cyan-400 text-slate-900 animate-pulse' : 'bg-rose-500 text-white'
+                              }`}>
+                                {isPackageActive ? 'সক্রিয় (Active)' : 'নিষ্ক্রিয় (Inactive)'}
+                              </span>
+                              <p className="text-xs text-blue-100 leading-normal">
+                                {isPackageActive 
+                                  ? 'অভিনন্দন! আপনার ৬০ টাকার প্রিমিয়াম স্টার্টিং প্যাকেজটি সক্রিয় রয়েছে। আপনি এখন আনলিমিটেড এড দেখতে পারবেন।' 
+                                  : 'আপনার প্যাকেজটি নিষ্ক্রিয় করা রয়েছে। নতুন এড দেখতে দয়া করে একটিভ প্রেস করুন।'}
+                              </p>
+                            </div>
+                            
+                            {/* Toggle buttons */}
+                            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto pt-1">
+                              <button
+                                onClick={() => {
+                                  playTapSound();
+                                  setIsPackageActive(true);
+                                }}
+                                className={`py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  isPackageActive 
+                                    ? 'bg-cyan-400 text-slate-950 shadow-md ring-2 ring-cyan-400/50 scale-[1.02]' 
+                                    : 'bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800'
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full block ${isPackageActive ? 'bg-slate-950' : 'bg-blue-400'}`} />
+                                <span>Active</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  playTapSound();
+                                  setIsPackageActive(false);
+                                }}
+                                className={`py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  !isPackageActive 
+                                    ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-500/50 scale-[1.02]' 
+                                    : 'bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800'
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full block ${!isPackageActive ? 'bg-white' : 'bg-rose-400'}`} />
+                                <span>Inactive</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-[#1e3a8a]/40 border border-[#3b82f6]/40 rounded-2xl p-4 text-center space-y-4">
+                            <div className="flex flex-col items-center">
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500 text-white text-[10px] font-black rounded-lg uppercase tracking-wider mb-2">
+                                নিষ্ক্রিয় (Inactive)
+                              </span>
+                              <p className="text-xs text-blue-100 leading-normal">
+                                পেমেন্ট সম্পন্ন করে প্যাকেজ একটিভ করতে নিচে পেমেন্ট আইডি সাবমিট করুন।
+                              </p>
+                            </div>
+
+                            {/* Active & Inactive Toggles that prompt to buy */}
+                            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto pt-1">
+                              <button
+                                onClick={() => {
+                                  playTapSound();
+                                  if (!isActive) {
+                                    alert('আপনার অ্যাকাউন্টটি নিষ্ক্রিয় রয়েছে! অনুগ্রহ করে প্রথমে অ্যাকাউন্টটি ২০ টাকা চার্জ দিয়ে সক্রিয় (Active) করুন। প্যাকেজ কিনতে প্রথমে অ্যাকাউন্ট অ্যাক্টিভেশন সম্পন্ন করা বাধ্যতামূলক।');
+                                  } else {
+                                    alert('প্যাকেজ একটিভ করতে প্রথমে ৬০ টাকা পেমেন্ট নিশ্চিত করতে হবে! দয়া করে নিচের পেমেন্ট স্লিপ ফর্মটি ব্যবহার করে পেমেন্ট সম্পূর্ণ করে রিয়েল ট্রানজেকশন আইডি সাবমিট করুন।');
+                                    setShowPackagePaymentForm(true);
+                                  }
+                                }}
+                                className="py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full block bg-blue-400" />
+                                <span>Active</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  playTapSound();
+                                  alert('প্যাকেজটি ইতিমধ্যেই নিষ্ক্রিয় অবস্থায় আছে। এটি একটিভ করতে প্রথমে ৬০ টাকা পেমেন্ট স্লিপ দিয়ে প্যাকেজটি ক্রয় করুন।');
+                                }}
+                                className="py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-rose-600 text-white shadow-md ring-2 ring-rose-500/50 scale-[1.02]"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full block bg-white" />
+                                <span>Inactive</span>
+                              </button>
+                            </div>
+
+                            <button
+                              id="buy-package-get-started"
+                              onClick={() => {
+                                playTapSound();
+                                if (!isActive) {
+                                  alert('আপনার অ্যাকাউন্টটি নিষ্ক্রিয় রয়েছে! অনুগ্রহ করে প্রথমে অ্যাকাউন্টটি ২০ টাকা চার্জ দিয়ে সক্রিয় (Active) করুন। প্যাকেজ কিনতে প্রথমে অ্যাকাউন্ট অ্যাক্টিভেশন সম্পন্ন করা বাধ্যতামূলক।');
+                                } else {
+                                  setShowPackagePaymentForm(true);
+                                }
+                              }}
+                              className="w-full py-3.5 mt-2 bg-gradient-to-r from-blue-500 to-indigo-600 hover:opacity-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer border border-cyan-400/30"
+                            >
+                              <span>Get Started</span>
+                              <ArrowRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+
+                  {/* Payment portal sheet for Starting Package */}
+                  {showPackagePaymentForm && !hasBoughtPackage && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-[#fcfaf7] rounded-3xl border border-[#eedfcb] p-6 shadow-2xl space-y-5 text-left transition-all mt-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-extrabold text-slate-800 text-sm">পেমেন্ট মেথড (Starting Package ৬০ টাকা)</h4>
+                          <span className="text-[10px] text-[#98643c] font-black tracking-wide uppercase">যেকোনো একটি পার্সোনাল নম্বরে ৬০ টাকা সেন্ড মানি করুন</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            playTapSound();
+                            setShowPackagePaymentForm(false);
+                            setPackageErrorMsg('');
+                            setPackageSuccessMsg('');
+                          }}
+                          className="p-1 px-2.5 bg-amber-100 hover:bg-amber-100/80 rounded-xl text-[10px] text-amber-800 font-bold"
+                        >
+                          বন্ধ করুন
+                        </button>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-3.5 bg-pink-50/40 rounded-2xl border border-pink-100 shadow-xs">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-[#e2136e] flex items-center justify-center text-white text-[11px] font-black">
+                              bK
+                            </div>
+                            <div>
+                              <h6 className="font-bold text-xs text-gray-700">বিকাশ পার্সোনাল</h6>
+                              <p className="text-sm font-mono font-bold text-[#e1136c] tracking-wide mt-0.5">01685482525</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              playTapSound();
+                              navigator.clipboard.writeText('01685482525');
+                              setCopiedTypePackage('bkash');
+                              setTimeout(() => setCopiedTypePackage(null), 2000);
+                            }}
+                            className="p-1.5 hover:bg-pink-100 rounded-xl text-pink-600 transition-colors flex items-center gap-1 text-[11px] font-bold border border-pink-100"
+                          >
+                            {copiedTypePackage === 'bkash' ? 'কপিড!' : 'কপি করুন'}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-3.5 bg-orange-50/30 rounded-2xl border border-orange-100/60 shadow-xs">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-orange-500 flex items-center justify-center text-white text-[11px] font-black">
+                              Nd
+                            </div>
+                            <div>
+                              <h6 className="font-bold text-xs text-gray-700">নগদ পার্সোনাল</h6>
+                              <p className="text-sm font-mono font-bold text-orange-600 tracking-wide mt-0.5">01685482525</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              playTapSound();
+                              navigator.clipboard.writeText('01685482525');
+                              setCopiedTypePackage('nagad');
+                              setTimeout(() => setCopiedTypePackage(null), 2000);
+                            }}
+                            className="p-1.5 hover:bg-orange-100 rounded-xl text-orange-600 transition-colors flex items-center gap-1 text-[11px] font-bold border border-orange-100"
+                          >
+                            {copiedTypePackage === 'nagad' ? 'কপিড!' : 'কপি করুন'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!senderNumberPackage || !trxIdPackage) return;
+                          playTapSound();
+                          setIsSubmittingPackage(true);
+                          setPackageErrorMsg('');
+                          setPackageSuccessMsg('');
+
+                          setTimeout(() => {
+                            setIsSubmittingPackage(false);
+                            const cleanTrx = trxIdPackage.trim().toUpperCase();
+                            const rawTrx = trxIdPackage.trim();
+
+                            // The user requested that if someone does a promotional transaction under '0000000000', approval is automatic
+                            if (rawTrx === '0000000000' || cleanTrx === 'PACKAGE60' || cleanTrx === 'START60') {
+                              playSuccessChime();
+                              setPackageSuccessMsg('প্যাকেজ সফলভাবে ক্রয় করা হয়েছে! অভিনন্দন, আপনি এখন বিজ্ঞাপন দেখতে পারবেন।');
+                              setTimeout(() => {
+                                setHasBoughtPackage(true);
+                                setIsPackageActive(true);
+                                setShowPackagePaymentForm(false);
+                              }, 1500);
+                            } else {
+                              playSuccessChime(); // Still play a clean buzzer or warning, let's keep it safe
+                              setPackageErrorMsg('❌ ভুল পেমেন্ট ট্রানজেকশন আইডি! আপনার ৬০ টাকা পেমেন্ট স্লিপ সার্ভারের সাথে মেলেনি। অনুগ্রহ করে সঠিক ট্রানজেকশন আইডি ইনপুট দিন।');
+                            }
+                          }, 1200);
+                        }}
+                        className="space-y-4 bg-white rounded-2xl p-5 border border-slate-100 shadow-sm"
+                      >
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-bold text-gray-500">প্রেরক নম্বর (যে নম্বর থেকে টাকা পাঠিয়েছেন):</label>
+                          <input
+                            type="text"
+                            placeholder="যেমন: 01712******"
+                            value={senderNumberPackage}
+                            onChange={(e) => setSenderNumberPackage(e.target.value.replace(/[^0-9]/g, ''))}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-xs font-mono font-medium focus:outline-none focus:ring-1 focus:ring-pink-500"
+                            maxLength={11}
+                            required
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-bold text-gray-500">ট্রানজেকশন আইডি (Transaction ID / TrxID):</label>
+                          <input
+                            type="text"
+                            placeholder="যেমন: 9K2LM8P3X"
+                            value={trxIdPackage}
+                            onChange={(e) => setTrxIdPackage(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-xs font-mono font-medium focus:outline-none focus:ring-1 focus:ring-pink-500 uppercase"
+                            required
+                          />
+                        </div>
+
+                        {packageErrorMsg && (
+                          <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-[10.5px] text-red-700 leading-snug">
+                            {packageErrorMsg}
+                          </div>
+                        )}
+
+                        {packageSuccessMsg && (
+                          <div className="p-3 bg-green-50 border border-green-100 rounded-xl text-[10.5px] text-green-700 font-bold">
+                            {packageSuccessMsg}
+                          </div>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={isSubmittingPackage || !senderNumberPackage || !trxIdPackage}
+                          className={`w-full py-3 rounded-xl text-white text-xs font-bold shadow-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            isSubmittingPackage ? 'bg-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600'
+                          }`}
+                        >
+                          {isSubmittingPackage ? 'সার্ভার ভেরিফাই করছে...' : 'প্যাকেজ পেমেন্ট স্লিপ জমা দিন'}
+                        </button>
+                      </form>
+                    </motion.div>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div
@@ -1013,7 +1433,7 @@ export default function App() {
       </footer>
 
       {/* Persistent Premium Sticky Bottom Navigation Dock */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 py-3 px-6 z-40 flex justify-center gap-16 sm:gap-24 shadow-[0_-5px_20px_rgba(0,0,0,0.06)]">
+      <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 py-3 px-4 z-40 flex justify-center gap-10 sm:gap-16 shadow-[0_-5px_20px_rgba(0,0,0,0.06)]">
         
         <button
           onClick={() => {
@@ -1034,6 +1454,26 @@ export default function App() {
             <Briefcase className="w-5 h-5" />
           </div>
           <span className="text-[11px] tracking-wide">Work</span>
+        </button>
+
+        <button
+          onClick={() => {
+            playTapSound();
+            setActiveTab('package');
+            if (view !== 'dashboard') setView('dashboard');
+          }}
+          className={`flex flex-col items-center gap-0.5 cursor-pointer transition-all duration-200 group ${
+            activeTab === 'package' 
+              ? 'text-[#e2136e] scale-105 font-sans font-black' 
+              : 'text-slate-400 hover:text-slate-600 font-bold'
+          }`}
+        >
+          <div className={`p-1.5 rounded-xl transition-all duration-205 ${
+            activeTab === 'package' ? 'bg-pink-50' : 'group-hover:bg-slate-50'
+          }`}>
+            <Package className="w-5 h-5" />
+          </div>
+          <span className="text-[11px] tracking-wide">Package</span>
         </button>
 
         <button
