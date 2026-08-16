@@ -1,6 +1,6 @@
 {
   "name": "Taka Earning Simulator",
-  "description": "A bKash-style tap-to-reveal balance check, simulated interactive ad-viewing rewarding 19 Taka, free Starter Package activation with instant toggle, and withdrawal system.",
+  "description": "A bKash-style tap-to-reveal balance check, simulated interactive ad-viewing rewarding 19 Taka, 20 Taka account activation system, 60 Taka starting package, and withdrawal system.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

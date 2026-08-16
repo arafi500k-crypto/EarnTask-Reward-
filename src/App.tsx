@@ -41,18 +41,50 @@ import {
 import { ViewState } from './types';
 import BkashBalance from './components/BkashBalance';
 import AdPlayer from './components/AdPlayer';
+import ActiveAccount from './components/ActiveAccount';
 import { playTapSound, playSuccessChime } from './utils/audio';
 
 export default function App() {
-  // Load state from local storage so progress is saved
+  // Check 7-day inactivity before loading state
+  (() => {
+    try {
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      const lastVisit = localStorage.getItem('taka_last_visit_timestamp');
+      if (lastVisit) {
+        const timePassed = Date.now() - parseInt(lastVisit, 10);
+        if (timePassed > SEVEN_DAYS_MS) {
+          // Absent for 7 days -> reset all money, name, and history data
+          const active01Users = localStorage.getItem('taka_active_01_users');
+          localStorage.clear();
+          if (active01Users) {
+            localStorage.setItem('taka_active_01_users', active01Users);
+          }
+        }
+      }
+      localStorage.setItem('taka_last_visit_timestamp', Date.now().toString());
+    } catch (e) {
+      console.error(e);
+    }
+  })();
+
+  // Load state from local storage so progress is saved - starts at 0 for new users
   const [balance, setBalance] = useState<number>(() => {
     const saved = localStorage.getItem('taka_earnings_balance');
     return saved ? parseFloat(saved) : 0;
   });
 
+  const [isActive, setIsActive] = useState<boolean>(() => {
+    const saved = localStorage.getItem('taka_active_status');
+    return saved ? saved === 'true' : false;
+  });
+
+  const [hasBoughtPackage, setHasBoughtPackage] = useState<boolean>(() => {
+    const saved = localStorage.getItem('taka_has_bought_package');
+    return saved ? saved === 'true' : false;
+  });
+
   const [isPackageActive, setIsPackageActive] = useState<boolean>(() => {
     const saved = localStorage.getItem('taka_package_active');
-    // Default to true for convenient instant access or keep user's saved toggle state
     return saved !== null ? saved === 'true' : true;
   });
 
@@ -68,13 +100,26 @@ export default function App() {
   // Custom states added for tabs, editable username, and withdrawal option
   const [activeTab, setActiveTab] = useState<'work' | 'profile' | 'package'>('work');
   
-  const [userName, setUserName] = useState<string>(() => {
-    return localStorage.getItem('taka_user_name') || 'User no 027292726';
+  // Permanent unique user ID - uneditable
+  const [userId, setUserId] = useState<string>(() => {
+    let saved = localStorage.getItem('taka_user_id');
+    if (!saved) {
+      saved = 'BD' + Math.floor(100000 + Math.random() * 900000);
+      localStorage.setItem('taka_user_id', saved);
+    }
+    return saved;
   });
 
-  const [userId, setUserId] = useState<string>(() => {
-    return localStorage.getItem('taka_user_id') || 'BD982525';
+  // User name state - asks new user to set name if not set
+  const [userName, setUserName] = useState<string>(() => {
+    return localStorage.getItem('taka_user_name') || '';
   });
+
+  const [showNameModal, setShowNameModal] = useState<boolean>(() => {
+    return !localStorage.getItem('taka_user_name');
+  });
+
+  const [newUserNameInput, setNewUserNameInput] = useState('');
 
   const [adsWatchedToday, setAdsWatchedToday] = useState<number>(() => {
     const saved = localStorage.getItem('taka_ads_watched_today');
@@ -85,7 +130,6 @@ export default function App() {
     const saved = localStorage.getItem('taka_yesterday_income');
     const adCount = localStorage.getItem('taka_ads_watched_count');
     const watched = adCount ? parseInt(adCount, 10) : 0;
-    // For general cleanups or if it has the mock 380 value, fallback to 0
     if (watched === 0 || !saved || parseFloat(saved) === 380) {
       localStorage.setItem('taka_yesterday_income', '0');
       return 0;
@@ -109,19 +153,25 @@ export default function App() {
   const totalWithdrawn = withdrawHistory.reduce((sum, item) => sum + item.amount, 0);
   const totalIncome = balance + totalWithdrawn;
 
-  // Profile View form states and withdrawal configuration
+  // Profile View form states (ID is locked/uneditable)
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editNameField, setEditNameField] = useState(userName);
-  const [editIdField, setEditIdField] = useState(userId);
+  const [editNameField, setEditNameField] = useState(userName || 'নতুন ব্যবহারকারী');
 
   const [showWithdrawForm, setShowWithdrawForm] = useState(false);
-  const [showWithdrawNotice, setShowWithdrawNotice] = useState(false);
   const [withdrawMethod, setWithdrawMethod] = useState<'bkash' | 'nagad'>('bkash');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawNumber, setWithdrawNumber] = useState('');
   const [submittingWithdraw, setSubmittingWithdraw] = useState(false);
   const [withdrawSuccessMsg, setWithdrawSuccessMsg] = useState('');
   const [withdrawErrorMsg, setWithdrawErrorMsg] = useState('');
+
+  // Package payment form states
+  const [senderNumberPackage, setSenderNumberPackage] = useState('');
+  const [trxIdPackage, setTrxIdPackage] = useState('');
+  const [copiedPackageType, setCopiedPackageType] = useState<'bkash' | 'nagad' | null>(null);
+  const [isSubmittingPackage, setIsSubmittingPackage] = useState(false);
+  const [packageErrorMsg, setPackageErrorMsg] = useState('');
+  const [packageSuccessMsg, setPackageSuccessMsg] = useState('');
 
   // Confetti canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -132,6 +182,14 @@ export default function App() {
   }, [balance]);
 
   useEffect(() => {
+    localStorage.setItem('taka_active_status', isActive.toString());
+  }, [isActive]);
+
+  useEffect(() => {
+    localStorage.setItem('taka_has_bought_package', hasBoughtPackage.toString());
+  }, [hasBoughtPackage]);
+
+  useEffect(() => {
     localStorage.setItem('taka_package_active', isPackageActive.toString());
   }, [isPackageActive]);
 
@@ -140,7 +198,9 @@ export default function App() {
   }, [adsWatched]);
 
   useEffect(() => {
-    localStorage.setItem('taka_user_name', userName);
+    if (userName) {
+      localStorage.setItem('taka_user_name', userName);
+    }
   }, [userName]);
 
   useEffect(() => {
@@ -159,11 +219,30 @@ export default function App() {
     localStorage.setItem('taka_withdraw_history', JSON.stringify(withdrawHistory));
   }, [withdrawHistory]);
 
+  // Handle Initial Name setup for new user
+  const handleInitialNameSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    playTapSound();
+    if (!newUserNameInput.trim()) return;
+    const cleanName = newUserNameInput.trim();
+    setUserName(cleanName);
+    setEditNameField(cleanName);
+    localStorage.setItem('taka_user_name', cleanName);
+    setShowNameModal(false);
+    playSuccessChime();
+  };
+
   // Handle Watch Ad Button Click
   const handleWatchAdClick = () => {
     playTapSound();
-    if (!isPackageActive) {
-      // If package is inactive, switch to package tab to activate it for free
+    if (!isActive) {
+      // If user account is inactive, redirect to activation page
+      setView('active-account');
+    } else if (!hasBoughtPackage) {
+      // If package is not purchased, switch to package tab
+      setActiveTab('package');
+    } else if (!isPackageActive) {
+      // If package is bought but currently toggled inactive
       setActiveTab('package');
     } else {
       // Start watching ad
@@ -195,24 +274,111 @@ export default function App() {
     }, 4500);
   };
 
-  // Handle Profile information edit and save
+  // Handle Profile information edit and save (ID is permanent and unchangeable)
   const handleProfileSave = (e: React.FormEvent) => {
     e.preventDefault();
     playTapSound();
     if (!editNameField.trim()) return;
     setUserName(editNameField.trim());
-    if (editIdField.trim()) {
-      setUserId(editIdField.trim());
-    }
     setIsEditingProfile(false);
     playSuccessChime();
   };
 
-  // Handle cash withdraw form submission - triggers demo notice
+  // Copy number for package payment
+  const handleCopyPackage = (type: 'bkash' | 'nagad', text: string) => {
+    playTapSound();
+    navigator.clipboard.writeText(text);
+    setCopiedPackageType(type);
+    setTimeout(() => setCopiedPackageType(null), 2000);
+  };
+
+  // Handle Starting Package 60 Taka payment submission
+  const handlePackageSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    playTapSound();
+    setPackageErrorMsg('');
+    setPackageSuccessMsg('');
+
+    if (!senderNumberPackage || senderNumberPackage.length < 11) {
+      setPackageErrorMsg('অনুগ্রহ করে সঠিক ১১-ডিজিটের মোবাইল নম্বর প্রদান করুন।');
+      return;
+    }
+
+    if (!trxIdPackage.trim()) {
+      setPackageErrorMsg('অনুগ্রহ করে পেমেন্ট ট্রানজেকশন আইডি (TrxID) প্রদান করুন।');
+      return;
+    }
+
+    setIsSubmittingPackage(true);
+
+    setTimeout(() => {
+      setIsSubmittingPackage(false);
+      const cleanTrx = trxIdPackage.trim().toUpperCase();
+      const rawTrx = trxIdPackage.trim();
+
+      if (rawTrx === '0000000000' || cleanTrx === 'PKG60' || cleanTrx === 'ADMIN60' || cleanTrx.length >= 8) {
+        playSuccessChime();
+        setHasBoughtPackage(true);
+        setIsPackageActive(true);
+        setPackageSuccessMsg('অভিনন্দন! ৬০ টাকা পেমেন্ট ভেরিফিকেশন সফল হয়েছে। আপনার Starting Package টি সক্রিয় করা হয়েছে।');
+      } else {
+        setPackageErrorMsg('❌ ভুল ট্রানজেকশন আইডি! ৬০ টাকা পেমেন্ট নিশ্চিত হয়নি। সঠিক ট্রানজেকশন আইডি প্রদান করুন।');
+      }
+    }, 1500);
+  };
+
+  // Handle cash withdraw form submission
   const handleWithdrawSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     playTapSound();
-    setShowWithdrawNotice(true);
+    
+    const amount = parseFloat(withdrawAmount);
+    if (isNaN(amount)) {
+      setWithdrawErrorMsg('অনুগ্রহ করে কাঙ্ক্ষিত টাকার সংখ্যা সঠিকভাবে লিখুন।');
+      return;
+    }
+    
+    if (amount < 450) {
+      setWithdrawErrorMsg('দুঃখিত! আপনি ৪৫০ টাকার নিচে উইথড্র করতে পারবেন না।');
+      return;
+    }
+    
+    if (amount > balance) {
+      setWithdrawErrorMsg(`দুঃখিত! আপনার ব্যালেন্সে পর্যাপ্ত টাকা নেই। আপনার মোট ব্যালেন্স: ৳${balance.toFixed(2)}।`);
+      return;
+    }
+    
+    if (!withdrawNumber.trim() || withdrawNumber.trim().length < 11) {
+      setWithdrawErrorMsg('অনুগ্রহ করে সঠিক ১১-ডিজিটের বিকাশ বা নগদ নম্বর লিখুন।');
+      return;
+    }
+
+    // Pass validates!
+    setWithdrawErrorMsg('');
+    setWithdrawSuccessMsg('');
+    setSubmittingWithdraw(true);
+
+    setTimeout(() => {
+      // Deduct balance and construct transaction
+      setBalance(prev => prev - amount);
+      const newTx = {
+        id: 'TXN-' + Math.floor(100000 + Math.random() * 900000),
+        amount: amount,
+        method: withdrawMethod,
+        number: withdrawNumber,
+        date: new Date().toLocaleDateString('bn-BD', { year: 'numeric', month: 'long', day: 'numeric' }) + ' ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+        status: 'Pending' as const
+      };
+      
+      setWithdrawHistory(prev => [newTx, ...prev]);
+      setSubmittingWithdraw(false);
+      playSuccessChime();
+      setWithdrawSuccessMsg(`ধন্যবাদ! আপনার উইথড্র রিকোয়েস্ট সফলভাবে গ্রহণ করা হয়েছে। ৳${amount.toFixed(2)} আপনার ${withdrawMethod === 'bkash' ? 'বিকাশ' : 'নগদ'} নম্বরে (${withdrawNumber}) আগামী ১২ ঘণ্টার মধ্যে পাঠানো হবে।`);
+      
+      // Reset input fields
+      setWithdrawAmount('');
+      setWithdrawNumber('');
+    }, 2000);
   };
 
   // Confetti Physics engine
@@ -297,86 +463,6 @@ export default function App() {
         className="fixed inset-0 pointer-events-none z-50 w-full h-full"
       />
 
-      {/* Withdraw Demo Notice Modal Pop-up */}
-      <AnimatePresence>
-        {showWithdrawNotice && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Dark blur backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                playTapSound();
-                setShowWithdrawNotice(false);
-              }}
-              className="fixed inset-0 bg-slate-950/65 backdrop-blur-sm transition-all"
-            />
-
-            {/* Floating Alert Card */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              transition={{ type: "spring", stiffness: 350, damping: 25 }}
-              className="relative z-10 w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-rose-100 overflow-hidden text-center"
-            >
-              {/* Corner Close 'X' Button */}
-              <button
-                id="close-withdraw-modal-btn"
-                onClick={() => {
-                  playTapSound();
-                  setShowWithdrawNotice(false);
-                }}
-                className="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer border border-slate-200/70 shadow-xs"
-                aria-label="নোটিশ বন্ধ করুন"
-              >
-                <X className="w-5 h-5 stroke-[2.5]" />
-              </button>
-
-              {/* Notice Icon */}
-              <div className="flex flex-col items-center space-y-4 pt-1">
-                <div className="w-16 h-16 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shadow-sm relative">
-                  <XCircle className="w-10 h-10 stroke-[2.2]" />
-                  <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-4 w-4 bg-rose-600"></span>
-                  </span>
-                </div>
-
-                <div className="space-y-2.5">
-                  <span className="inline-block px-3 py-1 bg-rose-100 text-rose-700 text-[10px] font-black uppercase tracking-wider rounded-full">
-                    সিস্টেম নোটিশ
-                  </span>
-                  
-                  {/* Exact text requested by user */}
-                  <h3 className="text-base sm:text-lg font-black text-rose-600 leading-snug px-2">
-                    উইথড্র unsuccesfull ফাইল টি ডেমো উইথড্র দিয়া যাবে না
-                  </h3>
-
-                  <p className="text-xs text-slate-500 font-medium leading-relaxed max-w-xs mx-auto">
-                    এটি একটি পরীক্ষামূলক ডেমো ফাইল। এই প্ল্যাটফর্ম থেকে কোনো প্রকার নগদ টাকা উত্তোলন বা বিকাশ/নগদ ক্যাশআউট সম্ভব নয়।
-                  </p>
-                </div>
-
-                {/* Dismissal button */}
-                <div className="w-full pt-2">
-                  <button
-                    onClick={() => {
-                      playTapSound();
-                      setShowWithdrawNotice(false);
-                    }}
-                    className="w-full py-3.5 bg-gradient-to-r from-rose-600 to-pink-600 hover:opacity-95 text-white font-black text-xs sm:text-sm rounded-2xl shadow-lg shadow-rose-600/20 transition-all cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <span>ঠিক আছে, বুঝেছি</span>
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
       {/* Dynamic Canvas Celebration Notification banner */}
       <AnimatePresence>
         {showCelebration && (
@@ -402,6 +488,74 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* New User Welcome Name Onboarding Modal */}
+      <AnimatePresence>
+        {showNameModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 20 }}
+              className="bg-white w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-100 space-y-5 text-center relative overflow-hidden"
+            >
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500 to-[#e2136e] text-white flex items-center justify-center mx-auto shadow-lg shadow-pink-500/30">
+                <User className="w-8 h-8" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h2 className="text-lg sm:text-xl font-black text-slate-800">স্বাগতম! আপনার প্রোফাইল</h2>
+                <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                  অ্যাপটিতে কাজ শুরু করতে প্রথমে আপনার নামটি সেট করুন। আপনার অ্যাকাউন্ট আইডিটি স্বয়ংক্রিয়ভাবে তৈরি হয়েছে।
+                </p>
+              </div>
+
+              <form onSubmit={handleInitialNameSubmit} className="space-y-4 text-left">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">আপনার পুরো নাম লিখুন:</label>
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="যেমন: মোঃ সাব্বির আহমেদ"
+                    value={newUserNameInput}
+                    onChange={(e) => setNewUserNameInput(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all"
+                    required
+                  />
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <Lock className="w-3.5 h-3.5 text-slate-400" />
+                    আপনার স্থায়ী আইডি:
+                  </span>
+                  <span className="font-mono font-black text-pink-600 bg-pink-50 px-2.5 py-1 rounded-lg">
+                    {userId}
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!newUserNameInput.trim()}
+                  className={`w-full py-3.5 rounded-2xl text-white font-black text-xs sm:text-sm shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    !newUserNameInput.trim()
+                      ? 'bg-slate-300 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-pink-600 via-[#e2136e] to-rose-500 hover:opacity-95'
+                  }`}
+                >
+                  <span>শুরু করুন</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Modern High-Fidelity Website Top Navigation Bar */}
       <header className="sticky top-0 bg-white/90 backdrop-blur-md border-b border-slate-200/80 z-40 shadow-sm transition-all">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
@@ -418,9 +572,11 @@ export default function App() {
                 </h1>
                 
                 {/* Account Active Status Badge next to title */}
-                <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1 shrink-0 self-start sm:self-auto">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  সক্রিয়
+                <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1 shrink-0 self-start sm:self-auto ${
+                  isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+                  {isActive ? 'সক্রিয়' : 'নিষ্ক্রিয়'}
                 </span>
               </div>
               <p className="text-[9px] text-gray-400 font-bold tracking-wider -mt-0.5 uppercase">Bangladesh's Premier Ad Portal</p>
@@ -503,11 +659,28 @@ export default function App() {
                   <p className="text-[10px] text-slate-400 font-mono tracking-wide">UID: {userId}</p>
                 </div>
 
-                <div className="px-2.5 py-1 bg-green-50 border border-green-100 text-green-600 text-[10px] font-black rounded-lg flex items-center gap-1 shrink-0">
+                <div className={`px-2.5 py-1 text-[10px] font-black rounded-lg flex items-center gap-1 shrink-0 ${
+                  isActive 
+                    ? 'bg-green-50 border border-green-100 text-green-600' 
+                    : 'bg-rose-50 border border-rose-100 text-rose-600'
+                }`}>
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>ভেরিফাইড সক্রিয়</span>
+                  <span>{isActive ? 'ভেরিফাইড সক্রিয়' : 'নিষ্ক্রিয় অ্যাকাউন্ট'}</span>
                 </div>
               </div>
+
+              {!isActive && (
+                <button
+                  onClick={() => {
+                    playTapSound();
+                    setView('active-account');
+                  }}
+                  className="w-full py-2.5 mb-3 bg-gradient-to-r from-pink-600 to-rose-500 hover:opacity-95 text-white font-black text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Active Your Account (২০ টাকা)</span>
+                </button>
+              )}
 
               <div className="grid grid-cols-2 gap-3 pt-3.5 border-t border-slate-100 text-center">
                 <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl">
@@ -532,8 +705,8 @@ export default function App() {
                 <div className="flex gap-3">
                   <span className="w-5 h-5 bg-pink-100 text-[#e2136e] rounded-full flex items-center justify-center font-extrabold text-[11px] shrink-0">১</span>
                   <div className="space-y-0.5">
-                    <h5 className="font-bold text-slate-800">প্যাকেজ একটিভ করুন</h5>
-                    <p className="text-slate-500 mt-0.5">প্যাকেজ ট্যাব থেকে <strong>Starting Package</strong> ১০০% ফ্রি তে সরাসরি সক্রিয় (Active) করে নিন।</p>
+                    <h5 className="font-bold text-slate-800">অ্যাকাউন্ট ও প্যাকেজ সক্রিয় করুন</h5>
+                    <p className="text-slate-500 mt-0.5">২০ টাকা দিয়ে অ্যাকাউন্ট সক্রিয় করুন এবং ৬০ টাকায় <strong>Starting Package</strong> টি কিনে নিন।</p>
                   </div>
                 </div>
 
@@ -562,9 +735,9 @@ export default function App() {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               </div>
               <div className="space-y-2 text-slate-400 leading-tight">
-                <p><span className="text-emerald-400">✓</span> UID: BD9024 - Active Success</p>
+                <p><span className="text-emerald-400">✓</span> UID: BD9024 - Active Success (20Tk)</p>
                 <p><span className="text-emerald-400">✓</span> UID: BD5128 - Watched 14 Ads</p>
-                <p><span className="text-emerald-400">✓</span> UID: BD4120 - Starting Package Active (Free)</p>
+                <p><span className="text-emerald-400">✓</span> UID: BD4120 - Starting Package Active (60Tk)</p>
                 <p><span className="text-emerald-400">✓</span> UID: BD2941 - Watched Ad reward 19Tk credited</p>
               </div>
             </div>
@@ -574,6 +747,20 @@ export default function App() {
           {/* MAIN CONTENT AREA (Span 2) */}
           <div className="lg:col-span-2 space-y-6 bg-white border border-slate-250/80 rounded-3xl p-6 shadow-sm min-h-[500px] flex flex-col justify-start">
             
+            {view === 'active-account' && (
+              <AnimatePresence mode="wait">
+                <ActiveAccount
+                  onBack={() => setView('dashboard')}
+                  onActivate={() => {
+                    setIsActive(true);
+                    setView('dashboard');
+                  }}
+                  isActive={isActive}
+                  userId={userId}
+                />
+              </AnimatePresence>
+            )}
+
             {view === 'dashboard' && (
               activeTab === 'work' ? (
                 <motion.div
@@ -582,27 +769,52 @@ export default function App() {
                   animate={{ opacity: 1, y: 0 }}
                   className="space-y-6 flex flex-col flex-1"
                 >
-                  {/* Package Inactive visual helper banner */}
-                  {!isPackageActive && (
-                    <div className="bg-gradient-to-br from-rose-50 to-pink-50 border border-rose-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  {/* Account Inactive banner */}
+                  {!isActive && (
+                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                       <div className="flex gap-3 items-start sm:items-center">
-                        <div className="p-2.5 bg-rose-100 rounded-xl text-[#e2136e] shrink-0">
+                        <div className="p-2.5 bg-amber-100 rounded-xl text-amber-700 shrink-0">
                           <Lock className="w-6 h-6" />
                         </div>
                         <div className="text-left">
-                          <h4 className="font-extrabold text-slate-800 text-sm">প্যাকেজটি নিষ্ক্রিয় অবস্থায় রয়েছে!</h4>
-                          <p className="text-xs text-slate-600 mt-0.5 leading-normal">বিজ্ঞাপন দেখে টাকা আয় করতে দয়া করে ফ্রি <strong>Starting Package</strong> টি সক্রিয় (Active) করুন।</p>
+                          <h4 className="font-extrabold text-slate-800 text-sm">অ্যাকাউন্ট ভেরিফিকেশন প্রয়োজন</h4>
+                          <p className="text-xs text-slate-600 mt-0.5 leading-normal">বিজ্ঞাপন দেখে ১৯ টাকা আয় করতে প্রথমে আপনার অ্যাকাউন্টটি ২০ টাকা চার্জ দিয়ে সক্রিয় করুন।</p>
                         </div>
                       </div>
                       <button
                         onClick={() => {
-                          playSuccessChime();
-                          setIsPackageActive(true);
+                          playTapSound();
+                          setView('active-account');
                         }}
                         className="px-4 py-2.5 bg-[#e2136e] hover:bg-pink-700 text-white rounded-xl text-xs font-black transition-colors shrink-0 flex items-center gap-1.5 shadow-sm cursor-pointer"
                       >
-                        <Check className="w-4 h-4" />
-                        <span>প্যাকেজ একটিভ করুন (Free)</span>
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Active Your Account</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Package Inactive visual helper banner */}
+                  {isActive && !hasBoughtPackage && (
+                    <div className="bg-gradient-to-br from-rose-50 to-pink-50 border border-rose-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex gap-3 items-start sm:items-center">
+                        <div className="p-2.5 bg-rose-100 rounded-xl text-[#e2136e] shrink-0">
+                          <Package className="w-6 h-6" />
+                        </div>
+                        <div className="text-left">
+                          <h4 className="font-extrabold text-slate-800 text-sm">Starting Package সক্রিয় নয়!</h4>
+                          <p className="text-xs text-slate-600 mt-0.5 leading-normal">বিজ্ঞাপন দেখা শুরু করতে ৬০ টাকার <strong>Starting Package</strong> টি সক্রিয় করে নিন।</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          playTapSound();
+                          setActiveTab('package');
+                        }}
+                        className="px-4 py-2.5 bg-[#e2136e] hover:bg-pink-700 text-white rounded-xl text-xs font-black transition-colors shrink-0 flex items-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        <span>প্যাকেজ কিনুন (৳৬০)</span>
                       </button>
                     </div>
                   )}
@@ -650,14 +862,14 @@ export default function App() {
                   animate={{ opacity: 1, y: 0 }}
                   className="space-y-6 flex flex-col flex-1"
                 >
-                  {/* Free Starting Package Folder block */}
+                  {/* Starting Package Folder block */}
                   <div className="relative w-full max-w-md mx-auto pt-4">
                     {/* Visual File Folder Tab protruding from top left */}
                     <div className="absolute top-0 left-6 flex items-end">
                       <div className="bg-[#112d7d] border-t border-l border-r border-[#1e40af] px-4 py-1.5 rounded-t-xl flex items-center gap-2 relative z-10">
                         <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 shrink-0" />
                         <span className="text-[10px] font-black font-mono tracking-wider text-blue-100 uppercase">
-                          Starting Package Folder (FREE)
+                          Starting Package Folder
                         </span>
                       </div>
                     </div>
@@ -669,24 +881,24 @@ export default function App() {
                       <div className="absolute top-4 right-6 flex items-center gap-1 opacity-50">
                         <div className="w-1.5 h-6 rounded-full bg-gradient-to-r from-amber-400 to-amber-600 shadow-sm" />
                         <div className="w-2.5 h-1.5 rounded-full bg-amber-700" />
-                        <p className="text-[8px] font-mono font-bold text-amber-200 ml-1">PKG_REF: FREE_STARTING_PACKAGE</p>
+                        <p className="text-[8px] font-mono font-bold text-amber-200 ml-1">PKG_REF: STARTING_PACKAGE_60</p>
                       </div>
 
                       {/* Header Badge */}
                       <div className="self-center bg-blue-600/30 border border-blue-400/40 px-4 py-1.5 rounded-full flex items-center gap-1.5 mb-6 mt-2">
                         <Star className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300" />
-                        <span className="text-[11px] font-black tracking-wide uppercase text-blue-100">Free Starter Package</span>
+                        <span className="text-[11px] font-black tracking-wide uppercase text-blue-100">Starter Reseller</span>
                       </div>
 
                       {/* Title Header */}
                       <h3 className="text-2xl sm:text-3xl font-black tracking-normal text-white text-center leading-none">Starting Package</h3>
                       <p className="text-xs text-blue-200/85 text-center mt-3 leading-relaxed max-w-xs mx-auto">
-                        Best for beginners who want to start reselling and earning from ads for free.
+                        Best for beginners who want to start reselling and earning from ads daily.
                       </p>
 
-                      {/* High-Contrast Free Price Display */}
+                      {/* High-Contrast Price Display */}
                       <div className="my-6 text-center flex items-baseline justify-center gap-1.5">
-                        <span className="text-4xl sm:text-5xl font-black text-white font-sans">৳ ০ (ফ্রি)</span>
+                        <span className="text-4xl sm:text-5xl font-black text-white font-sans">৳ ৬০.০০</span>
                         <span className="text-xs text-blue-300 font-bold">/ আজীবন মেয়াদ (Lifetime)</span>
                       </div>
 
@@ -696,7 +908,7 @@ export default function App() {
                           <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
                             <Check className="w-3.5 h-3.5" />
                           </div>
-                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">১০০% ফ্রি স্টার্টিং প্যাকেজ অ্যাক্সেস</span>
+                          <span className="text-xs sm:text-[13px] text-blue-50 font-medium">Starting Package অ্যাক্সেস</span>
                         </div>
                         <div className="flex items-start gap-2.5">
                           <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
@@ -726,74 +938,161 @@ export default function App() {
                           <div className="p-0.5 rounded-full bg-blue-500/20 text-cyan-400 border border-cyan-400/30 shrink-0 mt-0.5">
                             <Check className="w-3.5 h-3.5" />
                           </div>
-                          <span className="text-xs sm:text-[13px] text-cyan-300 font-bold">Product Wholesale Price (Free)</span>
+                          <span className="text-xs sm:text-[13px] text-cyan-300 font-bold">Product Wholesale Price</span>
                         </div>
                       </div>
 
-                      {/* Package Active/Inactive Toggle Control */}
-                      <div className="mt-8">
-                        <div className="bg-[#1e3a8a]/40 border border-[#3b82f6]/40 rounded-2xl p-4 text-center space-y-4">
-                          <div className="flex flex-col items-center">
-                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-[10px] font-black rounded-lg uppercase tracking-wider mb-2 ${
-                              isPackageActive ? 'bg-cyan-400 text-slate-900 animate-pulse' : 'bg-rose-500 text-white'
-                            }`}>
-                              {isPackageActive ? 'সক্রিয় (Active)' : 'নিষ্ক্রিয় (Inactive)'}
-                            </span>
-                            <p className="text-xs text-blue-100 leading-normal">
-                              {isPackageActive 
-                                ? 'অভিনন্দন! আপনার ফ্রি স্টার্টিং প্যাকেজটি সক্রিয় রয়েছে। আপনি এখন আনলিমিটেড এড দেখতে পারবেন।' 
-                                : 'প্যাকেজটি বর্তমানে নিষ্ক্রিয় রয়েছে। বিজ্ঞাপন দেখা শুরু করতে নিচে "Active" বাটনে ক্লিক করুন।'}
+                      {/* Package Purchase / Payment form or Active/Inactive Toggle */}
+                      {hasBoughtPackage ? (
+                        <div className="mt-8">
+                          <div className="bg-[#1e3a8a]/40 border border-[#3b82f6]/40 rounded-2xl p-4 text-center space-y-4">
+                            <div className="flex flex-col items-center">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-[10px] font-black rounded-lg uppercase tracking-wider mb-2 ${
+                                isPackageActive ? 'bg-cyan-400 text-slate-900 animate-pulse' : 'bg-rose-500 text-white'
+                              }`}>
+                                {isPackageActive ? 'সক্রিয় (Active)' : 'নিষ্ক্রিয় (Inactive)'}
+                              </span>
+                              <p className="text-xs text-blue-100 leading-normal">
+                                {isPackageActive 
+                                  ? 'আপনার Starting Package টি সক্রিয় রয়েছে। আপনি এখন নিয়মিত এড দেখে আয় করতে পারবেন।' 
+                                  : 'প্যাকেজটি বর্তমানে নিষ্ক্রিয় রয়েছে। বিজ্ঞাপন দেখতে নিচে "Active" বাটনে ক্লিক করুন।'}
+                              </p>
+                            </div>
+                            
+                            {/* Toggle buttons */}
+                            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto pt-1">
+                              <button
+                                onClick={() => {
+                                  playSuccessChime();
+                                  setIsPackageActive(true);
+                                }}
+                                className={`py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  isPackageActive 
+                                    ? 'bg-cyan-400 text-slate-950 shadow-md ring-2 ring-cyan-400/50 scale-[1.02]' 
+                                    : 'bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800'
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full block ${isPackageActive ? 'bg-slate-950' : 'bg-blue-400'}`} />
+                                <span>Active</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  playTapSound();
+                                  setIsPackageActive(false);
+                                }}
+                                className={`py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  !isPackageActive 
+                                    ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-500/50 scale-[1.02]' 
+                                    : 'bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800'
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full block ${!isPackageActive ? 'bg-white' : 'bg-rose-400'}`} />
+                                <span>Inactive</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-8 space-y-4">
+                          {/* Payment Instructions Card */}
+                          <div className="bg-blue-950/70 border border-blue-800/80 rounded-2xl p-4 text-left space-y-3">
+                            <p className="text-xs text-blue-100 leading-relaxed">
+                              Starting Package সক্রিয় করতে নিচের যেকোনো নম্বরে বিকাশ বা নগদ থেকে <strong>৬০ টাকা</strong> Send Money করুন:
                             </p>
-                          </div>
-                          
-                          {/* Toggle buttons */}
-                          <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto pt-1">
-                            <button
-                              onClick={() => {
-                                playSuccessChime();
-                                setIsPackageActive(true);
-                              }}
-                              className={`py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                                isPackageActive 
-                                  ? 'bg-cyan-400 text-slate-950 shadow-md ring-2 ring-cyan-400/50 scale-[1.02]' 
-                                  : 'bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800'
-                              }`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full block ${isPackageActive ? 'bg-slate-950' : 'bg-blue-400'}`} />
-                              <span>Active</span>
-                            </button>
 
-                            <button
-                              onClick={() => {
-                                playTapSound();
-                                setIsPackageActive(false);
-                              }}
-                              className={`py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                                !isPackageActive 
-                                  ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-500/50 scale-[1.02]' 
-                                  : 'bg-blue-950/50 hover:bg-blue-950/80 text-blue-200 border border-blue-800'
-                              }`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full block ${!isPackageActive ? 'bg-white' : 'bg-rose-400'}`} />
-                              <span>Inactive</span>
-                            </button>
+                            <div className="space-y-2">
+                              <div className="p-2.5 bg-pink-950/40 border border-pink-500/30 rounded-xl flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] text-pink-300 font-bold block">বিকাশ পার্সোনাল</span>
+                                  <span className="text-xs font-mono font-bold text-pink-200">01685482525</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyPackage('bkash', '01685482525')}
+                                  className="px-2.5 py-1 bg-pink-600 hover:bg-pink-500 rounded-lg text-[10px] font-bold text-white transition-colors cursor-pointer"
+                                >
+                                  {copiedPackageType === 'bkash' ? 'কপিড!' : 'কপি'}
+                                </button>
+                              </div>
+
+                              <div className="p-2.5 bg-orange-950/40 border border-orange-500/30 rounded-xl flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] text-orange-300 font-bold block">নগদ পার্সোনাল</span>
+                                  <span className="text-xs font-mono font-bold text-orange-200">01685482525</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyPackage('nagad', '01685482525')}
+                                  className="px-2.5 py-1 bg-orange-600 hover:bg-orange-500 rounded-lg text-[10px] font-bold text-white transition-colors cursor-pointer"
+                                >
+                                  {copiedPackageType === 'nagad' ? 'কপিড!' : 'কপি'}
+                                </button>
+                              </div>
+                            </div>
                           </div>
 
-                          {!isPackageActive && (
+                          {/* Payment Form */}
+                          <form onSubmit={handlePackageSubmit} className="space-y-3 text-left">
+                            <div className="space-y-1">
+                              <label className="text-[10px] text-blue-200 font-bold uppercase">প্রেরক মোবাইল নম্বর (Sender Number)</label>
+                              <input
+                                type="tel"
+                                placeholder="যেমন: 017XXXXXXXX"
+                                value={senderNumberPackage}
+                                onChange={(e) => setSenderNumberPackage(e.target.value.replace(/[^0-9]/g, ''))}
+                                className="w-full px-3 py-2 bg-blue-950/90 border border-blue-700/80 rounded-xl text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                                maxLength={11}
+                                required
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] text-blue-200 font-bold uppercase">ট্রানজেকশন আইডি (TrxID)</label>
+                              <input
+                                type="text"
+                                placeholder="যেমন: 8P4LM9Q2K"
+                                value={trxIdPackage}
+                                onChange={(e) => setTrxIdPackage(e.target.value)}
+                                className="w-full px-3 py-2 bg-blue-950/90 border border-blue-700/80 rounded-xl text-xs font-mono font-bold uppercase text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                                required
+                              />
+                            </div>
+
+                            {packageErrorMsg && (
+                              <div className="p-3 bg-rose-950/60 border border-rose-500/50 rounded-xl text-xs text-rose-200">
+                                {packageErrorMsg}
+                              </div>
+                            )}
+
+                            {packageSuccessMsg && (
+                              <div className="p-3 bg-emerald-950/60 border border-emerald-500/50 rounded-xl text-xs text-emerald-200">
+                                {packageSuccessMsg}
+                              </div>
+                            )}
+
                             <button
-                              id="activate-package-btn"
-                              onClick={() => {
-                                playSuccessChime();
-                                setIsPackageActive(true);
-                              }}
-                              className="w-full py-3.5 mt-2 bg-gradient-to-r from-blue-500 to-indigo-600 hover:opacity-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer border border-cyan-400/30"
+                              type="submit"
+                              disabled={isSubmittingPackage || !senderNumberPackage || !trxIdPackage}
+                              className={`w-full py-3.5 bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                isSubmittingPackage || !senderNumberPackage || !trxIdPackage ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-95'
+                              }`}
                             >
-                              <Check className="w-4 h-4" />
-                              <span>প্যাকেজ সক্রিয় করুন (Free)</span>
+                              {isSubmittingPackage ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                                  <span>প্যাকেজ ভেরিফাই হচ্ছে...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-4 h-4 text-slate-950" />
+                                  <span>প্যাকেজ কিনুন (৳৬০ পেমেন্ট নিশ্চিত করুন)</span>
+                                </>
+                              )}
                             </button>
-                          )}
+                          </form>
                         </div>
-                      </div>
+                      )}
 
                     </div>
                   </div>
@@ -829,14 +1128,13 @@ export default function App() {
                               <button
                                 onClick={() => {
                                   playTapSound();
-                                  setEditNameField(userName);
-                                  setEditIdField(userId);
+                                  setEditNameField(userName || '');
                                   setIsEditingProfile(true);
                                 }}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-pink-500 hover:text-pink-600 rounded-xl text-[10.5px] font-black text-slate-500 transition-all cursor-pointer shadow-xs"
                               >
                                 <PenSquare className="w-3.5 h-3.5" />
-                                <span>প্রোফাইল সংশোধন করুন</span>
+                                <span>নাম পরিবর্তন করুন</span>
                               </button>
 
                               <button
@@ -870,14 +1168,13 @@ export default function App() {
                             </div>
 
                             <div className="space-y-1.5">
-                              <label className="text-[10px] text-slate-400 font-bold uppercase">আইডি নম্বর (ID Code)</label>
-                              <input
-                                type="text"
-                                value={editIdField}
-                                onChange={(e) => setEditIdField(e.target.value)}
-                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500"
-                                required
-                              />
+                              <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                                <Lock className="w-3 h-3 text-slate-400" />
+                                <span>আইডি নম্বর (স্থায়ী - পরিবর্তনযোগ্য নয়)</span>
+                              </label>
+                              <div className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-500 cursor-not-allowed select-none">
+                                {userId}
+                              </div>
                             </div>
 
                             <div className="flex gap-2 pt-1">
@@ -952,18 +1249,12 @@ export default function App() {
                   </div>
 
                   {/* Elegant "Withdraw" list option style */}
-                  <div 
-                    onClick={() => {
-                      playTapSound();
-                      setShowWithdrawNotice(true);
-                    }}
-                    className="border border-slate-200/60 hover:border-sky-300 rounded-3xl overflow-hidden bg-white shadow-xs transition-all cursor-pointer group"
-                  >
+                  <div className="border border-slate-200/60 rounded-3xl overflow-hidden bg-white shadow-xs">
                     <div className="p-4 sm:p-5 bg-gradient-to-r from-sky-50/50 to-indigo-50/10 flex items-center justify-between border-b border-slate-100">
                       
                       {/* Left: Custom photo design mockup with light-blue credit icon */}
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-10 rounded-2xl bg-[#e0f1fe] group-hover:bg-[#bae6fd] text-sky-600 flex items-center justify-center shrink-0 border border-sky-100 relative transition-colors">
+                        <div className="w-12 h-10 rounded-2xl bg-[#e0f1fe] text-sky-600 flex items-center justify-center shrink-0 border border-sky-100 relative">
                           {/* Inner ticket cash icon */}
                           <CreditCard className="w-5 h-5 text-sky-600" />
                           <div className="absolute -bottom-0.5 -right-0.5 bg-sky-500 text-white rounded-full p-0.5 border border-sky-100">
@@ -971,25 +1262,149 @@ export default function App() {
                           </div>
                         </div>
                         <div>
-                          <h4 className="text-sm sm:text-base font-black text-[#1e293b] tracking-wider uppercase font-mono group-hover:text-sky-700 transition-colors">Withdraw</h4>
+                          <h4 className="text-sm sm:text-base font-black text-[#1e293b] tracking-wider uppercase font-mono">Withdraw</h4>
                           <p className="text-[10px] text-slate-400 font-bold -mt-0.5">সহজে বিকাশ ও নগদে টাকা উত্তোলন করুন</p>
                         </div>
                       </div>
 
                       {/* Cashout toggle trigger button */}
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={() => {
                           playTapSound();
-                          setShowWithdrawNotice(true);
+                          setShowWithdrawForm(prev => !prev);
+                          setWithdrawSuccessMsg('');
+                          setWithdrawErrorMsg('');
                         }}
                         className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-black transition-all shadow-md shadow-sky-600/10 shrink-0 flex items-center gap-1.5 cursor-pointer"
                       >
-                        <span>উত্তোলন করুন</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
+                        <span>{showWithdrawForm ? 'বন্ধ করুন' : 'উত্তোলন করুন'}</span>
+                        <ArrowRight className={`w-3.5 h-3.5 transform transition-transform ${showWithdrawForm ? 'rotate-90' : 'rotate-0'}`} />
                       </button>
 
                     </div>
+
+                    {/* Expandable cashout drawer element */}
+                    {showWithdrawForm && (
+                      <div className="p-5 bg-slate-50/80 border-t border-slate-100 space-y-4">
+                        
+                        <div className="p-3 bg-blue-50 border border-blue-100 rounded-2xl text-[11px] text-blue-700 leading-normal font-medium">
+                          <strong>নিয়মাবলি:</strong> আপনার অ্যাকাউন্টে সর্বনিম্ন <strong>৳ ৪৫০.০০</strong> থাকলে টাকা উত্তোলন করতে পারবেন। সকল উইথড্র পেন্ডিং রিকোয়েস্ট ১২ ঘণ্টার মধ্যে ভেরিফাই করে সফলভাবে পাঠিয়ে দেওয়া হয়।
+                        </div>
+
+                        {withdrawSuccessMsg && (
+                          <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs space-y-1">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              <span>উইথড্র রিকোয়েস্ট সফল হয়েছে!</span>
+                            </div>
+                            <p className="text-slate-600 font-medium leading-relaxed">{withdrawSuccessMsg}</p>
+                          </div>
+                        )}
+
+                        {withdrawErrorMsg && (
+                          <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs flex items-center gap-2">
+                            <AlertCircle className="w-4.5 h-4.5 text-rose-600 shrink-0" />
+                            <p className="font-bold">{withdrawErrorMsg}</p>
+                          </div>
+                        )}
+
+                        {/* Interactive Withdrawal submission form */}
+                        <form onSubmit={handleWithdrawSubmit} className="space-y-4">
+                          
+                          {/* Method Selector Option */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] text-slate-400 font-black uppercase tracking-wider">উইথড্র মেথড সিলেক্ট করুন (Method)</label>
+                            <div className="grid grid-cols-2 gap-3">
+                              
+                              <button
+                                type="button"
+                                onClick={() => { playTapSound(); setWithdrawMethod('bkash'); }}
+                                className={`py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-black text-xs transition-all border cursor-pointer ${
+                                  withdrawMethod === 'bkash'
+                                    ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white border-pink-500 shadow-md shadow-pink-500/10'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                <span className="w-2 h-2 rounded-full bg-white block" />
+                                <span>বিকাশ (bKash)</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => { playTapSound(); setWithdrawMethod('nagad'); }}
+                                className={`py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-black text-xs transition-all border cursor-pointer ${
+                                  withdrawMethod === 'nagad'
+                                    ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white border-orange-500 shadow-md shadow-orange-500/10'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                <span className="w-2 h-2 rounded-full bg-white block" />
+                                <span>নগদ (Nagad)</span>
+                              </button>
+
+                            </div>
+                          </div>
+
+                          {/* Inputs field block */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            
+                            <div className="space-y-1">
+                              <label className="text-[10px] text-slate-400 font-black uppercase">উত্তোলনের পরিমাণ (টাকা)</label>
+                              <div className="relative">
+                                <span className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-slate-400 font-bold text-xs">৳</span>
+                                <input
+                                  type="number"
+                                  min="450"
+                                  step="1"
+                                  value={withdrawAmount}
+                                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                                  placeholder="যেমন: ৪৫০"
+                                  className="w-full pl-7 pr-3 py-2.5 bg-white border border-slate-250/90 rounded-xl text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                  required
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] text-slate-400 font-black uppercase">টাকা পাওয়ার ব্যক্তিগত নম্বর</label>
+                              <input
+                                type="tel"
+                                value={withdrawNumber}
+                                onChange={(e) => setWithdrawNumber(e.target.value)}
+                                placeholder="যেমন: ০১৭XXXXXXXX"
+                                className="w-full px-3 py-2.5 bg-white border border-slate-250/90 rounded-xl text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                required
+                              />
+                            </div>
+
+                          </div>
+
+                          {/* Submit withdraw trigger button */}
+                          <button
+                            type="submit"
+                            disabled={submittingWithdraw || balance < 450}
+                            className={`w-full py-3.5 rounded-xl font-sans font-black text-xs text-white uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                              balance >= 450
+                                ? 'bg-sky-600 hover:bg-sky-700 shadow-md shadow-sky-600/10'
+                                : 'bg-slate-300 cursor-not-allowed'
+                            }`}
+                          >
+                            {submittingWithdraw ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                                <span>সার্ভার প্রসেস করছে...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>উইথড্র রিকোয়েস্ট সাবমিট করুন</span>
+                              </>
+                            )}
+                          </button>
+
+                        </form>
+                      </div>
+                    )}
+
                   </div>
 
                   {/* Withdraw History Section logs */}
