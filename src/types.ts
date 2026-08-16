@@ -14,7 +14,7 @@ export interface Ad {
   actionText: string;
 }
 
-export type ViewState = 'dashboard' | 'active-account' | 'ad-watching';
+export type ViewState = 'dashboard' | 'ad-watching';
 
 export interface TransactionMock {
   senderNumber: string;
